@@ -1,0 +1,40 @@
+# Message flow: local Kubernetes pod log TUI
+# Canonical description for UI ↔ API ↔ log stream wiring.
+
+mode: kubernetes_local
+cli:
+  flags:
+    - --namespace (default: default)
+    - --kubeconfig (optional path)
+    - --kube-context (optional context name)
+    - --container (optional, multi-container pods)
+    - --tail-lines (LogParams.tail_lines)
+
+steps:
+  - id: 1
+    component: kube::config::Config
+    action: Load cluster auth from kubeconfig (infer or --kubeconfig + --kube-context)
+    output: kube::Client
+
+  - id: 2
+    component: kube::api::Api<Pod>
+    action: list_namespaced_pod (ListParams, limit 500)
+    output: sorted pod name list
+
+  - id: 3
+    component: ratatui::widgets::Tabs
+    action: Render one tab per pod; highlight selected index
+    input: keyboard Left/Right to change selection
+
+  - id: 4
+    component: kube::api::Api::log_stream
+    action: LogParams { follow: true, tail_lines, container? }
+    output: AsyncBufRead line stream → mpsc → log buffer
+
+  - id: 5
+    component: tokio task (spawn on pod change or reload)
+    action: Abort previous JoinHandle; spawn new log_stream reader for selected pod
+
+  - id: 6
+    component: keyboard r
+    action: Spawn async list_pod_names; result on reload channel updates tabs + may restart logs
